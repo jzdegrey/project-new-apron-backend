@@ -1,7 +1,0 @@
-Hello, World! 🍳
-
-This is the backend for Project New Apron — the API that will one day
-whisk together recipes, meal plans, and grocery orders into one tidy dish.
-
-No endpoints yet, just this friendly little text file saying:
-the kitchen is warming up. Preheat your FastAPI docs, we're cooking soon.
