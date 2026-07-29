@@ -18,7 +18,11 @@ app/
   logging_config.py  # Console (+ local file) logging setup
   main.py            # FastAPI app, OpenAPI docs at /docs and /redoc
   cli.py              # Typer CLI: `python -m app.cli migrate|runserver`
+  core/
+    security.py       # Password hashing (bcrypt) + JWT access-token helpers
   api/                # Routers
+    auth.py            # Register/login/me endpoints
+    deps.py            # `get_current_user` (bearer token) dependency
   db/
     base.py           # SQLAlchemy declarative base
     session.py        # Engine/session + FastAPI `get_db` dependency
@@ -28,6 +32,25 @@ app/
   schemas/            # Pydantic request/response schemas
 tests/
 ```
+
+## Authentication
+
+Auth follows the OAuth2 password-bearer flow (see FastAPI's own tutorial for this
+pattern): clients exchange a username/password for a short-lived JWT bearer token,
+then send that token as `Authorization: Bearer <token>` on subsequent requests.
+
+- `POST /api/v1/auth/register` — create an account. Body validation (username,
+  password, name, date-of-birth, optional email/phone, terms acceptance, etc.)
+  lives in `app.schemas.user.UserCreate` and mirrors the rules enforced
+  client-side in the frontend and react-native apps.
+- `POST /api/v1/auth/login` — OAuth2 password flow (`application/x-www-form-urlencoded`
+  `username`/`password`), returns a bearer `access_token`. After
+  `LOGIN_LOCKOUT_THRESHOLD` consecutive failed attempts, further attempts are
+  rejected with `423 Locked` under an exponential backoff (doubling each
+  additional failure) until the lockout expires.
+- `GET /api/v1/auth/me` — returns the authenticated user (requires a bearer token).
+
+Passwords are hashed with bcrypt and never stored or returned in plaintext.
 
 ## Configuration
 

@@ -50,6 +50,22 @@ class Settings(BaseSettings):
     db_user: str = "root"
     db_password: SecretStr = Field(default=SecretStr(""))
 
+    # Auth / JWT
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
+
+    # Login lockout: after this many consecutive failures, lock out the
+    # account with exponential backoff (doubling each additional failure).
+    login_lockout_threshold: int = 3
+    login_lockout_base_minutes: int = 1
+
+    # CORS: comma-separated list of allowed origins (web frontend, etc.)
+    cors_origins: str = "http://localhost:3000"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
     @property
     def is_local(self) -> bool:
         return self.env is Environment.LOCAL
