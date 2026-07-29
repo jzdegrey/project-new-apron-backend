@@ -1,4 +1,77 @@
+import pytest
+from sqlalchemy import create_engine, inspect
+
+from app.db import migrate
 from app.db.migrate import _split_sql_statements
+from app.db.models.recipe import Recipe
+
+
+@pytest.fixture
+def sqlite_engine(monkeypatch):
+    """Swap the shared engine for an in-memory SQLite one for these tests.
+
+    The real migrations use MySQL-only syntax (stored procedures/triggers),
+    so these tests exercise the idempotency logic itself with generic SQL
+    rather than the checked-in `.sql` files.
+    """
+    engine = create_engine("sqlite:///:memory:", future=True)
+    monkeypatch.setattr(migrate, "engine", engine)
+    return engine
+
+
+def test_run_orm_migrations_creates_tables_and_is_idempotent(sqlite_engine):
+    migrate.run_orm_migrations()
+    migrate.run_orm_migrations()  # second run must not raise
+
+    table_names = inspect(sqlite_engine).get_table_names()
+    assert "recipes" in table_names
+
+
+def test_recipe_table_has_expected_index():
+    index_names = {ix.name for ix in Recipe.__table__.indexes}
+    assert "ix_recipes_title" in index_names
+
+
+def test_run_sql_migrations_applies_each_file_once(monkeypatch, sqlite_engine, tmp_path):
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "0001_create_widgets.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY);"
+    )
+    monkeypatch.setattr(migrate, "SQL_MIGRATIONS_DIR", sql_dir)
+
+    migrate.run_sql_migrations()
+    assert migrate._applied_migrations(sqlite_engine) == {"0001_create_widgets.sql"}
+    assert "widgets" in inspect(sqlite_engine).get_table_names()
+
+    # Re-running must skip the already-applied file. `filename` is the
+    # primary key of schema_migrations, so a re-insert would raise.
+    migrate.run_sql_migrations()
+    assert migrate._applied_migrations(sqlite_engine) == {"0001_create_widgets.sql"}
+
+
+def test_run_sql_migrations_does_not_reapply_after_manual_insert(
+    monkeypatch, sqlite_engine, tmp_path
+):
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "0001_create_widgets.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY);"
+    )
+    monkeypatch.setattr(migrate, "SQL_MIGRATIONS_DIR", sql_dir)
+
+    migrate._ensure_migrations_table(sqlite_engine)
+    with sqlite_engine.begin() as conn:
+        from sqlalchemy import text
+
+        conn.execute(
+            text("INSERT INTO schema_migrations (filename) VALUES (:filename)"),
+            {"filename": "0001_create_widgets.sql"},
+        )
+
+    # Should skip cleanly rather than attempting (and failing) a duplicate insert.
+    migrate.run_sql_migrations()
+    assert "widgets" not in inspect(sqlite_engine).get_table_names()
 
 
 def test_splits_simple_statements():
