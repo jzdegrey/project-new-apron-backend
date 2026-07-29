@@ -1,2 +1,81 @@
 # project-new-apron-backend
-Backend code for Project New Apron
+
+Backend API for Project New Apron, built with FastAPI, Pydantic, SQLAlchemy, and Typer.
+
+## Stack
+
+- Python 3.14
+- [FastAPI](https://fastapi.tiangolo.com/) + [Pydantic](https://docs.pydantic.dev/) — API layer and settings/schema validation
+- [SQLAlchemy](https://www.sqlalchemy.org/) — ORM against a MySQL database
+- [Typer](https://typer.tiangolo.com/) — CLI (migrations, running the dev server)
+- MySQL 8
+
+## Project layout
+
+```
+app/
+  globals.py         # Settings (env vars + .env), incl. secrets and the ENV switch
+  logging_config.py  # Console (+ local file) logging setup
+  main.py            # FastAPI app, OpenAPI docs at /docs and /redoc
+  cli.py              # Typer CLI: `python -m app.cli migrate|runserver`
+  api/                # Routers
+  db/
+    base.py           # SQLAlchemy declarative base
+    session.py        # Engine/session + FastAPI `get_db` dependency
+    models/           # ORM models
+    migrate.py         # Idempotent migration runner (ORM tables/indexes + raw SQL)
+    migrations/sql/    # Raw .sql migrations (stored procedures, triggers, ...)
+  schemas/            # Pydantic request/response schemas
+tests/
+```
+
+## Configuration
+
+All configuration is read through `app.globals.settings`, which loads from process
+env vars first and then a `.env` file. Copy `.env.example` to `.env` and fill in
+real values before running locally; never commit `.env`.
+
+`ENV` must be one of `local`, `stg`, or `prod`. When `ENV=local`, logs are also
+written to `logs/app.log` in addition to the console; in `stg`/`prod` logging is
+console-only.
+
+## Running locally
+
+### With Docker Compose (recommended)
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+This starts the API (`http://localhost:8000`) and a MySQL 8 instance. Interactive
+API docs are available at `/docs` (Swagger UI) and `/redoc`.
+
+### Without Docker
+
+```bash
+python3.14 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env   # point DB_HOST at a MySQL instance you have running
+python -m app.cli migrate
+python -m app.cli runserver --reload
+```
+
+## Migrations
+
+```bash
+python -m app.cli migrate
+```
+
+This is idempotent and safe to re-run: it creates ORM-managed tables/indexes via
+`Base.metadata.create_all(checkfirst=True)`, then applies any new raw `.sql`
+files under `app/db/migrations/sql/` (for stored procedures, triggers, etc.),
+tracking what's already been applied in a `schema_migrations` table.
+
+## Tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
