@@ -35,10 +35,23 @@ def test_invalid_usernames_are_rejected(username):
         UserCreate(**_valid_payload(username=username))
 
 
+@pytest.mark.parametrize("length", [5, 32])
+def test_username_at_length_boundaries_is_accepted(length):
+    user = UserCreate(**_valid_payload(username="a" * length))
+    assert len(user.username) == length
+
+
 @pytest.mark.parametrize("password", ["short", "a" * 65])
 def test_invalid_password_length_is_rejected(password):
     with pytest.raises(ValidationError):
         UserCreate(**_valid_payload(password=password, confirm_password=password))
+
+
+@pytest.mark.parametrize("length", [6, 64])
+def test_password_at_length_boundaries_is_accepted(length):
+    password = "a" * length
+    user = UserCreate(**_valid_payload(password=password, confirm_password=password))
+    assert len(user.password) == length
 
 
 def test_mismatched_passwords_are_rejected():
@@ -50,6 +63,12 @@ def test_mismatched_passwords_are_rejected():
 def test_invalid_names_are_rejected(name):
     with pytest.raises(ValidationError):
         UserCreate(**_valid_payload(first_name=name))
+
+
+@pytest.mark.parametrize("length", [3, 64])
+def test_name_at_length_boundaries_is_accepted(length):
+    user = UserCreate(**_valid_payload(first_name="a" * length))
+    assert len(user.first_name) == length
 
 
 def test_name_allows_dashes_underscores_and_spaces():
