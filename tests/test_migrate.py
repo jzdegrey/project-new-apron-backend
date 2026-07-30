@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, inspect
 from app.db import migrate
 from app.db.migrate import _split_sql_statements
 from app.db.models.recipe import Recipe
+from app.db.models.user import User
 
 
 @pytest.fixture
@@ -25,11 +26,19 @@ def test_run_orm_migrations_creates_tables_and_is_idempotent(sqlite_engine):
 
     table_names = inspect(sqlite_engine).get_table_names()
     assert "recipes" in table_names
+    assert "users" in table_names
 
 
 def test_recipe_table_has_expected_index():
     index_names = {ix.name for ix in Recipe.__table__.indexes}
     assert "ix_recipes_title" in index_names
+
+
+def test_user_table_has_expected_unique_indexes():
+    """Username and email must be unique (SCRUM-14's AC: 'Username must be Unique')."""
+    indexes_by_name = {ix.name: ix for ix in User.__table__.indexes}
+    assert indexes_by_name["ix_users_username"].unique is True
+    assert indexes_by_name["ix_users_email"].unique is True
 
 
 def test_run_sql_migrations_applies_each_file_once(monkeypatch, sqlite_engine, tmp_path):

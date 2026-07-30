@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.auth import _lockout_duration
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
@@ -143,3 +144,31 @@ def test_account_locks_out_after_exceeding_failed_attempt_threshold(client):
     locked_response = _login(client)
     assert locked_response.status_code == 423
     assert "Retry-After" in locked_response.headers
+
+
+@pytest.mark.parametrize(
+    "failed_attempts,expected_minutes",
+    [(4, 1), (5, 2), (6, 4), (7, 8), (8, 16)],
+)
+def test_lockout_duration_doubles_with_each_additional_failure(failed_attempts, expected_minutes):
+    """Per SCRUM-14's AC: 4th failure -> 1 minute, 5th -> 2, 6th -> 4, 7th -> 8 (doubling).
+
+    A real lockout can only progress to the next tier once the previous one has
+    actually expired, which isn't practical to wait out in a fast unit test, so this
+    exercises the pure backoff calculation directly instead of driving it through HTTP.
+    """
+    assert _lockout_duration(failed_attempts) == timedelta(minutes=expected_minutes)
+
+
+def test_login_error_message_does_not_reveal_whether_username_exists(client):
+    """Keeps the failure response identical for unknown users and wrong passwords
+    so the endpoint can't be used to enumerate registered usernames."""
+    _register(client)
+
+    wrong_password_response = _login(client, password="wrong-password")
+    unknown_username_response = _login(client, username="nobody-here")
+
+    assert wrong_password_response.status_code == unknown_username_response.status_code == 401
+    assert (
+        wrong_password_response.json()["detail"] == unknown_username_response.json()["detail"]
+    )
