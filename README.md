@@ -52,6 +52,20 @@ then send that token as `Authorization: Bearer <token>` on subsequent requests.
 
 Passwords are hashed with bcrypt and never stored or returned in plaintext.
 
+## Dependencies
+
+Runtime dependencies are declared in `pyproject.toml` (`[project.dependencies]`). `requirements.txt`
+pins the exact resolved versions (including transitive dependencies) of that same set, and is what
+`docker build` installs from for reproducible builds. Regenerate it after changing
+`pyproject.toml`'s dependencies:
+
+```bash
+python3.14 -m venv /tmp/apron-freeze && source /tmp/apron-freeze/bin/activate
+pip install --upgrade pip && pip install .
+pip freeze | grep -v project-new-apron-backend > requirements.txt
+deactivate && rm -rf /tmp/apron-freeze
+```
+
 ## Configuration
 
 All configuration is read through `app.globals.settings`, which loads from process
