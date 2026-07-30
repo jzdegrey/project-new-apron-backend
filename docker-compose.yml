@@ -12,7 +12,7 @@ services:
         condition: service_healthy
     volumes:
       - ./app:/srv/app/app
-    command: ["python", "-m", "app.cli", "runserver", "--reload"]
+    command: ["sh", "-c", "python -m app.cli migrate && python -m app.cli runserver --reload"]
 
   db:
     image: mysql:8.4
@@ -27,6 +27,7 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+    command: ["--log-bin-trust-function-creators=1"]
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
