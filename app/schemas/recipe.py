@@ -227,9 +227,9 @@ class RecipeRead(BaseModel):
     image_url: str | None = None
     ingredients: list[RecipeIngredientOut]
     directions: list[RecipeDirectionOut]
-    # Derived from the Meal<->Recipe relationship owned by SCRUM-24, which hasn't
-    # landed yet. Always null until that ticket ships; the UI already only shows
-    # this "if ever used", so it degrades gracefully in the meantime.
+    # Name of the meal plan this recipe is scheduled in, via the meal_recipes
+    # join (see app/db/models/meal_plan.py): the plan covering today if any,
+    # else the most recently ended past plan. Null if never used in a meal.
     last_used_in_meal_plan: str | None = None
 
 
@@ -242,6 +242,7 @@ class RecipeListItem(BaseModel):
     name: str
     description: str | None
     image_url: str | None = None
+    # See RecipeRead.last_used_in_meal_plan for how this is derived.
     last_used_in_meal_plan: str | None = None
 
 
