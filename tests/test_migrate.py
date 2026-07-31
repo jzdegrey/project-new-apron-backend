@@ -31,7 +31,7 @@ def test_run_orm_migrations_creates_tables_and_is_idempotent(sqlite_engine):
 
 def test_recipe_table_has_expected_index():
     index_names = {ix.name for ix in Recipe.__table__.indexes}
-    assert "ix_recipes_title" in index_names
+    assert "ix_recipes_owner_id" in index_names
 
 
 def test_user_table_has_expected_unique_indexes():
@@ -81,6 +81,25 @@ def test_run_sql_migrations_does_not_reapply_after_manual_insert(
     # Should skip cleanly rather than attempting (and failing) a duplicate insert.
     migrate.run_sql_migrations()
     assert "widgets" not in inspect(sqlite_engine).get_table_names()
+
+
+def test_run_migrations_reapplies_orm_schema_after_sql_migrations(monkeypatch):
+    """A raw SQL migration may need to drop/recreate an ORM-managed table (e.g.
+    to apply a schema change create_all's checkfirst can't express on its
+    own) -- see 0002_drop_recipe_stub_procedures.sql. run_migrations() must
+    call run_orm_migrations() both before and after run_sql_migrations() so
+    that table ends up recreated, not left missing."""
+    call_order: list[str] = []
+    monkeypatch.setattr(
+        migrate, "run_orm_migrations", lambda: call_order.append("orm")
+    )
+    monkeypatch.setattr(
+        migrate, "run_sql_migrations", lambda: call_order.append("sql")
+    )
+
+    migrate.run_migrations()
+
+    assert call_order == ["orm", "sql", "orm"]
 
 
 def test_splits_simple_statements():

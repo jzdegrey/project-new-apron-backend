@@ -100,4 +100,9 @@ def run_sql_migrations() -> None:
 def run_migrations() -> None:
     run_orm_migrations()
     run_sql_migrations()
+    # Re-run so a raw SQL migration that drops/recreates an ORM-managed table
+    # (e.g. to apply a schema change create_all's checkfirst can't express)
+    # leaves that table restored before this call returns. A no-op otherwise,
+    # since checkfirst skips anything already present.
+    run_orm_migrations()
     logger.info("Migrations complete")
