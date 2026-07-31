@@ -380,3 +380,13 @@ def test_recipe_list_item_includes_last_used_in_meal_plan(client):
 
     items = client.get("/api/v1/recipes", headers=headers).json()["items"]
     assert items[0]["last_used_in_meal_plan"] == "Old Plan"
+
+
+def test_list_recipes_search_filters_by_name_case_insensitively(client):
+    headers = _register_and_login(client)
+    _create_recipe(client, headers, name="Chocolate Cake")
+    _create_recipe(client, headers, name="Pancakes")
+
+    response = client.get("/api/v1/recipes?search=choc", headers=headers)
+    names = [item["name"] for item in response.json()["items"]]
+    assert names == ["Chocolate Cake"]

@@ -125,6 +125,9 @@ def list_recipes(
     sort: RecipeSortOrder = Query(
         RecipeSortOrder.RECENTLY_ADDED, description="Sort order for the recipe list."
     ),
+    search: str | None = Query(
+        None, description="Case-insensitive filter on recipe name (used by the meal recipe picker)."
+    ),
     offset: int = Query(0, ge=0, description="Number of recipes to skip, for pagination."),
     limit: int = Query(
         RECIPE_LIST_PAGE_SIZE, ge=1, le=50, description="Page size (defaults to 15)."
@@ -147,6 +150,8 @@ def list_recipes(
         .filter(Recipe.owner_id == current_user.id, Recipe.deleted_at.is_(None))
         .group_by(Recipe.id)
     )
+    if search:
+        query = query.filter(Recipe.name.ilike(f"%{search.strip()}%"))
     if sort == RecipeSortOrder.RECENTLY_USED:
         last_used = func.max(Meal.day)
         query = query.order_by(
