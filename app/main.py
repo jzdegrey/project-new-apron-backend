@@ -1,11 +1,14 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
+from app.api.recipe import router as recipe_router
 from app.globals import settings
 from app.logging_config import configure_logging, get_logger
 
@@ -39,3 +42,7 @@ app.add_middleware(
 
 app.include_router(health_router, prefix=settings.api_v1_prefix)
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
+app.include_router(recipe_router, prefix=settings.api_v1_prefix)
+
+Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+app.mount(settings.media_url_prefix, StaticFiles(directory=settings.upload_dir), name="media")

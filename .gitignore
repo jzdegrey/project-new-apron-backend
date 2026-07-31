@@ -9,6 +9,9 @@ __pycache__/
 # Application log output (written when running locally)
 /logs/
 
+# User-uploaded recipe photos (written when running locally)
+/uploads/
+
 # Distribution / packaging
 .Python
 build/

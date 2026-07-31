@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     # CORS: comma-separated list of allowed origins (web frontend, etc.)
     cors_origins: str = "http://localhost:3000"
 
+    # Recipe photo uploads: local disk storage, served back under media_url_prefix.
+    upload_dir: str = "uploads"
+    media_url_prefix: str = "/media"
+    max_image_size_bytes: int = 2 * 1024 * 1024
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
