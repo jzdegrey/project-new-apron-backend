@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# Application log output (written when running locally)
+/logs/
+
 # Distribution / packaging
 .Python
 build/
