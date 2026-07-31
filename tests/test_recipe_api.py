@@ -259,3 +259,134 @@ def test_delete_image_clears_image_url(client):
     response = client.delete(f"/api/v1/recipes/{recipe_id}/image", headers=headers)
     assert response.status_code == 200
     assert response.json()["image_url"] is None
+
+
+# --- SCRUM-24: last_used_in_meal_plan / recently_used / most_used, now backed
+# --- by the meal_recipes join (previously always-None/fallback stubs). ---
+
+
+def _create_meal_plan(client, headers, **overrides):
+    payload = {
+        "name": "Test Plan",
+        "description": None,
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-10",
+    }
+    payload.update(overrides)
+    return client.post("/api/v1/meal-plans", json=payload, headers=headers)
+
+
+def _create_meal(client, headers, plan_id, **overrides):
+    payload = {"meal_type": "breakfast", "day": "2026-01-02"}
+    payload.update(overrides)
+    return client.post(f"/api/v1/meal-plans/{plan_id}/meals", json=payload, headers=headers)
+
+
+def _attach_recipe(client, headers, plan_id, meal_id, recipe_id):
+    return client.post(
+        f"/api/v1/meal-plans/{plan_id}/meals/{meal_id}/recipes",
+        json={"recipe_id": recipe_id},
+        headers=headers,
+    )
+
+
+def test_recipe_never_used_has_null_last_used_in_meal_plan(client):
+    headers = _register_and_login(client)
+    recipe_id = _create_recipe(client, headers).json()["id"]
+    assert client.get(f"/api/v1/recipes/{recipe_id}", headers=headers).json()[
+        "last_used_in_meal_plan"
+    ] is None
+
+
+def test_recipe_used_in_past_plan_reports_that_plan_name(client):
+    headers = _register_and_login(client)
+    recipe_id = _create_recipe(client, headers).json()["id"]
+    plan_id = _create_meal_plan(
+        client, headers, name="Old Plan", start_date="2020-01-01", end_date="2020-01-10"
+    ).json()["id"]
+    meal_id = _create_meal(client, headers, plan_id, day="2020-01-02").json()["id"]
+    _attach_recipe(client, headers, plan_id, meal_id, recipe_id)
+
+    response = client.get(f"/api/v1/recipes/{recipe_id}", headers=headers)
+    assert response.json()["last_used_in_meal_plan"] == "Old Plan"
+
+
+def test_recipe_used_in_current_plan_takes_priority_over_past(client):
+    headers = _register_and_login(client)
+    recipe_id = _create_recipe(client, headers).json()["id"]
+
+    past_plan_id = _create_meal_plan(
+        client, headers, name="Old Plan", start_date="2020-01-01", end_date="2020-01-10"
+    ).json()["id"]
+    past_meal_id = _create_meal(client, headers, past_plan_id, day="2020-01-02").json()["id"]
+    _attach_recipe(client, headers, past_plan_id, past_meal_id, recipe_id)
+
+    today = date.today()
+    current_plan_id = _create_meal_plan(
+        client,
+        headers,
+        name="Current Plan",
+        start_date=today.isoformat(),
+        end_date=today.isoformat(),
+    ).json()["id"]
+    current_meal_id = _create_meal(
+        client, headers, current_plan_id, day=today.isoformat()
+    ).json()["id"]
+    _attach_recipe(client, headers, current_plan_id, current_meal_id, recipe_id)
+
+    response = client.get(f"/api/v1/recipes/{recipe_id}", headers=headers)
+    assert response.json()["last_used_in_meal_plan"] == "Current Plan"
+
+
+def test_list_recipes_sort_most_used_orders_by_attachment_count(client):
+    headers = _register_and_login(client)
+    low_id = _create_recipe(client, headers, name="Low").json()["id"]
+    high_id = _create_recipe(client, headers, name="High").json()["id"]
+
+    plan_id = _create_meal_plan(client, headers).json()["id"]
+    meal1 = _create_meal(client, headers, plan_id, meal_type="breakfast", day="2026-01-02").json()["id"]
+    meal2 = _create_meal(client, headers, plan_id, meal_type="lunch", day="2026-01-02").json()["id"]
+    meal3 = _create_meal(client, headers, plan_id, meal_type="dinner", day="2026-01-02").json()["id"]
+
+    _attach_recipe(client, headers, plan_id, meal1, high_id)
+    _attach_recipe(client, headers, plan_id, meal2, high_id)
+    _attach_recipe(client, headers, plan_id, meal3, low_id)
+
+    response = client.get("/api/v1/recipes?sort=most_used", headers=headers)
+    ids = [item["id"] for item in response.json()["items"]]
+    assert ids == [high_id, low_id]
+
+
+def test_list_recipes_sort_recently_used_orders_unused_last(client):
+    headers = _register_and_login(client)
+    unused_id = _create_recipe(client, headers, name="Unused").json()["id"]
+    used_id = _create_recipe(client, headers, name="Used").json()["id"]
+
+    plan_id = _create_meal_plan(client, headers).json()["id"]
+    meal_id = _create_meal(client, headers, plan_id).json()["id"]
+    _attach_recipe(client, headers, plan_id, meal_id, used_id)
+
+    response = client.get("/api/v1/recipes?sort=recently_used", headers=headers)
+    ids = [item["id"] for item in response.json()["items"]]
+    assert ids == [used_id, unused_id]
+
+
+def test_recipe_list_item_includes_last_used_in_meal_plan(client):
+    headers = _register_and_login(client)
+    recipe_id = _create_recipe(client, headers).json()["id"]
+    plan_id = _create_meal_plan(client, headers, name="Old Plan").json()["id"]
+    meal_id = _create_meal(client, headers, plan_id).json()["id"]
+    _attach_recipe(client, headers, plan_id, meal_id, recipe_id)
+
+    items = client.get("/api/v1/recipes", headers=headers).json()["items"]
+    assert items[0]["last_used_in_meal_plan"] == "Old Plan"
+
+
+def test_list_recipes_search_filters_by_name_case_insensitively(client):
+    headers = _register_and_login(client)
+    _create_recipe(client, headers, name="Chocolate Cake")
+    _create_recipe(client, headers, name="Pancakes")
+
+    response = client.get("/api/v1/recipes?search=choc", headers=headers)
+    names = [item["name"] for item in response.json()["items"]]
+    assert names == ["Chocolate Cake"]

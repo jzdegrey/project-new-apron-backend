@@ -1,6 +1,7 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -10,6 +11,7 @@ from app.core.images import (
     image_url,
     save_recipe_image,
 )
+from app.db.models.meal_plan import Meal, MealPlan, MealRecipe
 from app.db.models.recipe import Recipe, RecipeDirection, RecipeIngredient
 from app.db.models.user import User
 from app.db.session import get_db
@@ -42,7 +44,38 @@ def _get_owned_recipe(db: Session, recipe_id: int, owner: User) -> Recipe:
     return recipe
 
 
-def _to_recipe_read(recipe: Recipe) -> RecipeRead:
+def _last_used_in_meal_plan(db: Session, recipe_id: int) -> str | None:
+    """The meal plan this recipe is scheduled in: the one covering today, if
+    any, else the most recently ended past one. See app/schemas/recipe.py."""
+    today = date.today()
+
+    def _joined_plans(db: Session):
+        return (
+            db.query(MealPlan)
+            .join(Meal, Meal.meal_plan_id == MealPlan.id)
+            .join(MealRecipe, MealRecipe.meal_id == Meal.id)
+            .filter(MealRecipe.recipe_id == recipe_id, MealPlan.deleted_at.is_(None))
+        )
+
+    current = (
+        _joined_plans(db)
+        .filter(MealPlan.start_date <= today, MealPlan.end_date >= today)
+        .order_by(MealPlan.start_date.asc())
+        .first()
+    )
+    if current is not None:
+        return current.name
+
+    past = (
+        _joined_plans(db)
+        .filter(MealPlan.end_date < today)
+        .order_by(MealPlan.end_date.desc())
+        .first()
+    )
+    return past.name if past is not None else None
+
+
+def _to_recipe_read(db: Session, recipe: Recipe) -> RecipeRead:
     return RecipeRead(
         id=recipe.id,
         name=recipe.name,
@@ -51,18 +84,17 @@ def _to_recipe_read(recipe: Recipe) -> RecipeRead:
         image_url=image_url(recipe.image_path),
         ingredients=[RecipeIngredientOut.model_validate(i) for i in recipe.ingredients],
         directions=[RecipeDirectionOut.model_validate(d) for d in recipe.directions],
-        # No Meal<->Recipe usage data exists until SCRUM-24 ships; see schema docstring.
-        last_used_in_meal_plan=None,
+        last_used_in_meal_plan=_last_used_in_meal_plan(db, recipe.id),
     )
 
 
-def _to_recipe_list_item(recipe: Recipe) -> RecipeListItem:
+def _to_recipe_list_item(db: Session, recipe: Recipe) -> RecipeListItem:
     return RecipeListItem(
         id=recipe.id,
         name=recipe.name,
         description=recipe.description,
         image_url=image_url(recipe.image_path),
-        last_used_in_meal_plan=None,
+        last_used_in_meal_plan=_last_used_in_meal_plan(db, recipe.id),
     )
 
 
@@ -93,6 +125,9 @@ def list_recipes(
     sort: RecipeSortOrder = Query(
         RecipeSortOrder.RECENTLY_ADDED, description="Sort order for the recipe list."
     ),
+    search: str | None = Query(
+        None, description="Case-insensitive filter on recipe name (used by the meal recipe picker)."
+    ),
     offset: int = Query(0, ge=0, description="Number of recipes to skip, for pagination."),
     limit: int = Query(
         RECIPE_LIST_PAGE_SIZE, ge=1, le=50, description="Page size (defaults to 15)."
@@ -102,22 +137,35 @@ def list_recipes(
 ) -> RecipeListPage:
     """Paginated, card-view list of the caller's own (non-deleted) recipes.
 
-    `sort=recently_used` and `sort=most_used` are accepted for API stability
-    but currently order identically to `recently_added`: both depend on the
-    Meal<->Recipe relationship owned by SCRUM-24, which hasn't shipped yet.
-    Once it does, this becomes a real ORDER BY over that join instead of a
-    fallback.
+    `sort=recently_used` orders by the latest scheduled day (`meals.day`) a
+    recipe was attached to via `meal_recipes`; `sort=most_used` orders by how
+    many `meal_recipes` rows reference it (each meal a recipe is attached to
+    counts once, so the same recipe on 3 different days counts as 3). Recipes
+    never used sort after ones that have been, in both cases.
     """
-    query = db.query(Recipe).filter(
-        Recipe.owner_id == current_user.id, Recipe.deleted_at.is_(None)
+    query = (
+        db.query(Recipe)
+        .outerjoin(MealRecipe, MealRecipe.recipe_id == Recipe.id)
+        .outerjoin(Meal, Meal.id == MealRecipe.meal_id)
+        .filter(Recipe.owner_id == current_user.id, Recipe.deleted_at.is_(None))
+        .group_by(Recipe.id)
     )
-    # TODO(SCRUM-24): once meal_recipes exists, order recently_used by
-    # MAX(meals.day) and most_used by COUNT(meal_recipes rows) per recipe.
-    query = query.order_by(Recipe.created_at.desc(), Recipe.id.desc())
+    if search:
+        query = query.filter(Recipe.name.ilike(f"%{search.strip()}%"))
+    if sort == RecipeSortOrder.RECENTLY_USED:
+        last_used = func.max(Meal.day)
+        query = query.order_by(
+            last_used.is_(None), last_used.desc(), Recipe.created_at.desc(), Recipe.id.desc()
+        )
+    elif sort == RecipeSortOrder.MOST_USED:
+        usage_count = func.count(MealRecipe.id)
+        query = query.order_by(usage_count.desc(), Recipe.created_at.desc(), Recipe.id.desc())
+    else:
+        query = query.order_by(Recipe.created_at.desc(), Recipe.id.desc())
 
     rows = query.offset(offset).limit(limit + 1).all()
     has_more = len(rows) > limit
-    items = [_to_recipe_list_item(recipe) for recipe in rows[:limit]]
+    items = [_to_recipe_list_item(db, recipe) for recipe in rows[:limit]]
     return RecipeListPage(items=items, page_size=limit, has_more=has_more)
 
 
@@ -145,7 +193,7 @@ def create_recipe(
     db.commit()
     db.refresh(recipe)
     logger.info("User %s created recipe %d", current_user.username, recipe.id)
-    return _to_recipe_read(recipe)
+    return _to_recipe_read(db, recipe)
 
 
 @router.get(
@@ -160,7 +208,7 @@ def get_recipe(
     db: Session = Depends(get_db),
 ) -> RecipeRead:
     recipe = _get_owned_recipe(db, recipe_id, current_user)
-    return _to_recipe_read(recipe)
+    return _to_recipe_read(db, recipe)
 
 
 @router.put(
@@ -186,7 +234,7 @@ def update_recipe(
     db.commit()
     db.refresh(recipe)
     logger.info("User %s updated recipe %d", current_user.username, recipe.id)
-    return _to_recipe_read(recipe)
+    return _to_recipe_read(db, recipe)
 
 
 @router.delete(
@@ -235,7 +283,7 @@ async def upload_recipe_image(
     if previous_path is not None:
         delete_recipe_image(previous_path)
     logger.info("User %s uploaded image for recipe %d", current_user.username, recipe.id)
-    return _to_recipe_read(recipe)
+    return _to_recipe_read(db, recipe)
 
 
 @router.delete(
@@ -256,4 +304,4 @@ def delete_recipe_image_endpoint(
         recipe.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(recipe)
-    return _to_recipe_read(recipe)
+    return _to_recipe_read(db, recipe)
